@@ -1,0 +1,82 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+            packages: build-essential cmake binutils clang-format libliquid-dev libmicrohttpd-dev librtlsdr-dev
+            cmake_args: ''
+            elf_machine: Advanced Micro Devices X86-64
+            can_run: true
+          - target: linux-aarch64
+            runner: ubuntu-24.04-arm
+            packages: build-essential cmake binutils clang-format libliquid-dev libmicrohttpd-dev librtlsdr-dev
+            cmake_args: ''
+            elf_machine: AArch64
+            can_run: true
+          - target: linux-armhf
+            runner: ubuntu-24.04
+            packages: binutils cmake clang-format gcc-arm-linux-gnueabihf libc6-dev-armhf-cross libliquid-dev:armhf libmicrohttpd-dev:armhf librtlsdr-dev:armhf
+            cmake_args: -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/arm-linux-gnueabihf.cmake
+            elf_machine: ARM
+            needs_armhf_packages: true
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable armhf packages
+        if: matrix.needs_armhf_packages
+        run: |
+          # The default runner mirror only hosts amd64 packages. armhf packages
+          # are published from Ubuntu's ports archive.
+          sudo sed -i '/^Components: /a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/armhf.sources > /dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports
+          Suites: noble noble-updates noble-backports noble-security
+          Components: main universe restricted multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          Architectures: armhf
+          EOF
+          sudo dpkg --add-architecture armhf
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes ${{ matrix.packages }}
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Verify version output
+        if: matrix.can_run
+        run: ./build/mpxcast --version
+
+      - name: Verify target architecture
+        run: |
+          readelf --file-header build/mpxcast | \
+            grep --fixed-strings 'Machine:                           ${{ matrix.elf_machine }}'
+
+      - name: Check formatting
+        run: scripts/format.sh --check

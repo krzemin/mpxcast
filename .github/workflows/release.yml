@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  verify-version:
+    name: Verify release version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify CMake version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -nE 's/^project\(mpxcast VERSION ([^ )]+).*/\1/p' CMakeLists.txt)
+          if [ -z "$version" ]; then
+            echo "Could not read the mpxcast version from CMakeLists.txt." >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match CMake version $version." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: verify-version
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - verify-version
+      - build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Create release with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "mpxcast ${{ needs.verify-version.outputs.version }}" \
+            --fail-on-no-commits

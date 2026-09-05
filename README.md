@@ -8,7 +8,7 @@ RDS radiotext as ICY metadata tags.
 
 ## Features
 
-- live RTL-SDR input
+- live RTL-SDR input or looping captured IQ-file input
 - mono and stereo FM decoding
 - WAV and MPEG-TS audio streaming
 - basic RDS decoding
@@ -42,6 +42,26 @@ MHz. Query parameters can override stream defaults, for example:
 ```text
 http://radio.local:2347/93.6.ts?stereo=0&rds=1&name=Local%20FM
 ```
+
+## Captured IQ files
+
+Use `--input-file` (or `-f`) to replay a captured RTL-SDR recording instead of
+opening a device:
+
+```sh
+mpxcast -f station-94.9MHz.bin
+```
+
+The file must contain raw unsigned 8-bit interleaved I/Q samples at 1,920,000
+samples per second, such as a recording made with:
+
+```sh
+rtl_sdr -f 94900000 -s 1920000 station-94.9MHz.bin
+```
+
+Playback loops indefinitely. The frequency in the HTTP path is accepted for
+stream metadata and session selection, but is ignored for file input because a
+recording cannot be retuned. `--device` and `--input-file` cannot be combined.
 
 ## Logging
 

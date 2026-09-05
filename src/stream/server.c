@@ -664,8 +664,15 @@ int server_run(const struct server_config *config) {
     server.config = *config;
     pthread_mutex_init(&server.lock, NULL);
     rtl_source_init(&server.rtl_source);
-    if (rtl_source_start(&server.rtl_source, config->device_index) < 0) {
-        ERROR("Failed to open RTL-SDR device: index=%u", config->device_index);
+    if ((config->input_file != NULL &&
+         rtl_source_start_file(&server.rtl_source, config->input_file) < 0) ||
+        (config->input_file == NULL &&
+         rtl_source_start(&server.rtl_source, config->device_index) < 0)) {
+        if (config->input_file != NULL) {
+            ERROR("Failed to open input file: %s", config->input_file);
+        } else {
+            ERROR("Failed to open RTL-SDR device: index=%u", config->device_index);
+        }
         pthread_mutex_destroy(&server.lock);
         return 1;
     }

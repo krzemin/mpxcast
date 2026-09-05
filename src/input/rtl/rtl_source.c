@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "core/logging.h"
 
@@ -173,10 +174,35 @@ fail:
     return -1;
 }
 
+int rtl_source_start_file(struct rtl_source *source, const char *path) {
+    struct stat file_status;
+    FILE *file;
+
+    if (stat(path, &file_status) != 0 || !S_ISREG(file_status.st_mode) ||
+        file_status.st_size == 0 || (file_status.st_size % 2) != 0) {
+        return -1;
+    }
+
+    file = fopen(path, "rb");
+    if (file == NULL) {
+        return -1;
+    }
+
+    source->file = file;
+    source->file_input = true;
+    return 0;
+}
+
 void rtl_source_stop(struct rtl_source *source) {
     pthread_t *thread = (pthread_t *)source->thread;
     pthread_mutex_t *mutex = (pthread_mutex_t *)source->mutex;
     pthread_cond_t *condition = (pthread_cond_t *)source->condition;
+
+    if (source->file != NULL) {
+        fclose((FILE *)source->file);
+        memset(source, 0, sizeof(*source));
+        return;
+    }
 
     if (source->device != NULL && source->running) {
         rtlsdr_cancel_async((rtlsdr_dev_t *)source->device);
@@ -203,6 +229,12 @@ void rtl_source_stop(struct rtl_source *source) {
 int rtl_source_tune(struct rtl_source *source, uint32_t frequency_hz) {
     pthread_mutex_t *mutex = (pthread_mutex_t *)source->mutex;
     pthread_t *thread = (pthread_t *)source->thread;
+
+    if (source->file_input) {
+        WARN("Ignoring requested frequency %.3fMHz while reading an input file.",
+             (double)frequency_hz / 1000000.0);
+        return 0;
+    }
 
     if (source->device == NULL) {
         return -1;
@@ -245,6 +277,25 @@ int rtl_source_read(struct rtl_source *source, unsigned char *buffer, size_t byt
     size_t copied = 0u;
     pthread_mutex_t *mutex = (pthread_mutex_t *)source->mutex;
     pthread_cond_t *condition = (pthread_cond_t *)source->condition;
+
+    if (source->file_input) {
+        FILE *file = (FILE *)source->file;
+
+        while (copied < byte_count) {
+            copied += fread(buffer + copied, 1u, byte_count - copied, file);
+            if (copied == byte_count) {
+                return 0;
+            }
+            if (ferror(file)) {
+                return -1;
+            }
+            clearerr(file);
+            if (fseek(file, 0, SEEK_SET) != 0) {
+                return -1;
+            }
+        }
+        return 0;
+    }
 
     pthread_mutex_lock(mutex);
 

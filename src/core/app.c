@@ -66,7 +66,9 @@ int app_run(int argc, char **argv) {
     }
     logging_set_level(log_level);
     INFO("mpxcast %s", MPXCAST_VERSION);
-    rtl_source_log_devices();
+    if (config.input_file == NULL) {
+        rtl_source_log_devices();
+    }
     print_config(&config, log_level);
 
     return server_run(&config);
@@ -80,6 +82,7 @@ static void print_usage(const char *program_name) {
             "  -H, --host <host>              Listen host [%s]\n"
             "  -p, --port <port>              Listen port [%s]\n"
             "  -d, --device <index>           RTL-SDR device index [%u]\n"
+            "  -f, --input-file <path>        Loop raw 1.92Msps unsigned 8-bit IQ file\n"
             "  -s, --stereo <0|1>             Stereo mode [%u]\n"
             "  -r, --rds <0|1>                RDS mode [%u]\n"
             "  -m, --demod-math <name>        FM demod math: %s [%s]\n"
@@ -95,18 +98,26 @@ static void print_usage(const char *program_name) {
 }
 
 static void print_config(const struct server_config *config, enum logging_level log_level) {
+    char input_description[1024];
+
+    if (config->input_file != NULL) {
+        snprintf(input_description, sizeof(input_description), "file=\"%s\"", config->input_file);
+    } else {
+        snprintf(input_description, sizeof(input_description), "device=%u", config->device_index);
+    }
+
     if (config->stream_defaults.deemphasis_tau_us == 0.0f) {
-        INFO("Configuration: listen=%s:%s device=%u mode=%s rds=%s gain=%.3g de-emphasis=off "
+        INFO("Configuration: listen=%s:%s input=%s mode=%s rds=%s gain=%.3g de-emphasis=off "
              "demod=%s log-level=%s",
-             config->bind_host, config->bind_port, config->device_index,
+             config->bind_host, config->bind_port, input_description,
              config->stream_defaults.mode == STREAM_MODE_STEREO ? "stereo" : "mono",
              config->stream_defaults.rds_enabled ? "on" : "off",
              config->stream_defaults.volume_gain, demod_math_name(config->demod_math),
              log_level_name(log_level));
     } else {
-        INFO("Configuration: listen=%s:%s device=%u mode=%s rds=%s gain=%.3g de-emphasis=%.3gus "
+        INFO("Configuration: listen=%s:%s input=%s mode=%s rds=%s gain=%.3g de-emphasis=%.3gus "
              "demod=%s log-level=%s",
-             config->bind_host, config->bind_port, config->device_index,
+             config->bind_host, config->bind_port, input_description,
              config->stream_defaults.mode == STREAM_MODE_STEREO ? "stereo" : "mono",
              config->stream_defaults.rds_enabled ? "on" : "off",
              config->stream_defaults.volume_gain, config->stream_defaults.deemphasis_tau_us,
@@ -116,6 +127,8 @@ static void print_config(const struct server_config *config, enum logging_level 
 
 static enum parse_cli_result parse_cli_options(int argc, char **argv, struct server_config *config,
                                                enum logging_level *log_level) {
+    bool device_option_seen = false;
+    bool input_file_option_seen = false;
     bool log_level_explicit = false;
     unsigned int verbosity = 0u;
     int option;
@@ -125,6 +138,7 @@ static enum parse_cli_result parse_cli_options(int argc, char **argv, struct ser
             {"host", required_argument, NULL, 'H'},
             {"port", required_argument, NULL, 'p'},
             {"device", required_argument, NULL, 'd'},
+            {"input-file", required_argument, NULL, 'f'},
             {"stereo", required_argument, NULL, 's'},
             {"rds", required_argument, NULL, 'r'},
             {"demod-math", required_argument, NULL, 'm'},
@@ -137,7 +151,7 @@ static enum parse_cli_result parse_cli_options(int argc, char **argv, struct ser
             {NULL, 0, NULL, 0},
         };
 
-        option = getopt_long(argc, argv, "H:p:d:s:r:m:g:t:vL:Vh", long_options, NULL);
+        option = getopt_long(argc, argv, "H:p:d:f:s:r:m:g:t:vL:Vh", long_options, NULL);
         if (option < 0) {
             break;
         }
@@ -158,6 +172,15 @@ static enum parse_cli_result parse_cli_options(int argc, char **argv, struct ser
                 ERROR("Invalid RTL-SDR device index: %s", optarg);
                 return PARSE_CLI_RESULT_ERROR;
             }
+            device_option_seen = true;
+            break;
+        case 'f':
+            if (optarg[0] == '\0') {
+                ERROR("Input file path must not be empty.");
+                return PARSE_CLI_RESULT_ERROR;
+            }
+            config->input_file = optarg;
+            input_file_option_seen = true;
             break;
         case 's': {
             bool enabled;
@@ -220,6 +243,11 @@ static enum parse_cli_result parse_cli_options(int argc, char **argv, struct ser
 
     if (optind != argc) {
         print_usage(argv[0]);
+        return PARSE_CLI_RESULT_ERROR;
+    }
+
+    if (device_option_seen && input_file_option_seen) {
+        ERROR("--device and --input-file cannot be used together.");
         return PARSE_CLI_RESULT_ERROR;
     }
 

@@ -13,6 +13,7 @@ struct server_config {
     const char *input_file;
     uint32_t device_index;
     enum fm_discriminator_impl demod_math;
+    float fm_quality_interval_seconds; /* Zero disables measurement. */
     struct stream_http_defaults stream_defaults;
 };
 

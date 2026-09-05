@@ -1,5 +1,6 @@
 #include "core/app.h"
 
+#include <float.h>
 #include <getopt.h>
 #include <math.h>
 #include <stdbool.h>
@@ -21,6 +22,7 @@
 #define DEFAULT_DEMOD_MATH FM_DISCRIMINATOR_IMPL_ATAN2_LIBM
 #define DEFAULT_VOLUME_GAIN 1.0f
 #define DEFAULT_DEEMPHASIS_TAU_US 50.0f
+#define DEFAULT_FM_QUALITY_INTERVAL_SECONDS 5.0f
 
 enum parse_cli_result {
     PARSE_CLI_RESULT_OK = 0,
@@ -88,6 +90,8 @@ static void print_usage(const char *program_name) {
             "  -m, --demod-math <name>        FM demod math: %s [%s]\n"
             "  -g, --volume-gain <gain>       PCM volume gain [%.3g]\n"
             "  -t, --deemphasis-tau <usec>    De-emphasis tau; 0 disables it [%.3g]\n"
+            "      --fm-quality[=SECONDS]     Enable quality reports [5 seconds; off by default]\n"
+            "                                 Zero or negative seconds disable measurement\n"
             "  -v, --verbose                  Increase verbosity (-v: debug, -vv: trace)\n"
             "      --log-level <level>         Set level: trace, debug, info, warn, error\n"
             "  -V, --version                  Show version\n"
@@ -144,6 +148,7 @@ static enum parse_cli_result parse_cli_options(int argc, char **argv, struct ser
             {"demod-math", required_argument, NULL, 'm'},
             {"volume-gain", required_argument, NULL, 'g'},
             {"deemphasis-tau", required_argument, NULL, 't'},
+            {"fm-quality", optional_argument, NULL, 'Q'},
             {"verbose", no_argument, NULL, 'v'},
             {"log-level", required_argument, NULL, 'L'},
             {"version", no_argument, NULL, 'V'},
@@ -209,6 +214,17 @@ static enum parse_cli_result parse_cli_options(int argc, char **argv, struct ser
                 config->stream_defaults.volume_gain == 0.0f) {
                 ERROR("Invalid volume gain: %s", optarg);
                 return PARSE_CLI_RESULT_ERROR;
+            }
+            break;
+        case 'Q':
+            config->fm_quality_interval_seconds = DEFAULT_FM_QUALITY_INTERVAL_SECONDS;
+            if (optarg != NULL &&
+                !parse_float_option(optarg, -FLT_MAX, &config->fm_quality_interval_seconds)) {
+                ERROR("Invalid FM quality interval: %s (expected finite seconds)", optarg);
+                return PARSE_CLI_RESULT_ERROR;
+            }
+            if (config->fm_quality_interval_seconds <= 0.0f) {
+                config->fm_quality_interval_seconds = 0.0f;
             }
             break;
         case 'v':

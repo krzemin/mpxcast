@@ -12,6 +12,7 @@ RDS radiotext as ICY metadata tags.
 - mono and stereo FM decoding
 - WAV and MPEG-TS audio streaming
 - basic RDS decoding
+- optional estimated FM reception quality from MPX noise
 - ICY metadata from RDS radiotext
 
 The project is intended to be small enough for low-power computers. It has been
@@ -68,6 +69,11 @@ recording cannot be retuned. `--device` and `--input-file` cannot be combined.
 The default log level is `info`. Use `-v` for `debug`, `-vv` for `trace`, or
 set an explicit level with `--log-level=trace|debug|info|warn|error`. An explicit
 log level takes precedence over `-v`.
+
+Use `--fm-quality` to log reception quality every 5 seconds while streaming, or
+`--fm-quality=3` to set a 3-second reporting interval. Measurement is disabled by
+default; zero or negative intervals also disable it. The percentage is only an
+estimate based on MPX noise: higher is better.
 
 ## Version
 

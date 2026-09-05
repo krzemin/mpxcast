@@ -2,8 +2,6 @@
 
 #include <string.h>
 
-static void fm_pipeline_destroy(struct fm_pipeline_state *state);
-
 void fm_pipeline_init(struct fm_pipeline_state *state) {
     memset(state, 0, sizeof(*state));
     liquid_resampler_init(&state->rds_resampler);
@@ -17,9 +15,14 @@ void fm_pipeline_reset(struct fm_pipeline_state *state) {
     fm_pipeline_init(state);
 }
 
-void fm_pipeline_configure(struct fm_pipeline_state *state, bool rds_enabled) {
+void fm_pipeline_configure(struct fm_pipeline_state *state, bool rds_enabled,
+                           float quality_interval_seconds) {
     rtl_iq_decimator_configure(&state->rtl_iq_decimator);
     state->rds_enabled = rds_enabled;
+    fm_quality_destroy(&state->quality);
+    if (quality_interval_seconds > 0.0f) {
+        fm_quality_init(&state->quality, quality_interval_seconds);
+    }
 
     if (rds_enabled) {
         liquid_resampler_configure(&state->rds_resampler, FM_PIPELINE_MPX_RATE_HZ,
@@ -33,13 +36,23 @@ void fm_pipeline_process_live_block(struct fm_pipeline_state *state, struct rtl_
         rtl_iq_decimator_configure(&state->rtl_iq_decimator);
     }
 
-    if (rtl_iq_decimator_read_block_float(&state->rtl_iq_decimator, source, state->decimated_iq) !=
-        0) {
+    const bool input_valid = rtl_iq_decimator_read_block_float(&state->rtl_iq_decimator, source,
+                                                               state->decimated_iq) == 0;
+    if (!input_valid) {
         memset(state->decimated_iq, 0, sizeof(state->decimated_iq));
     }
 
     fm_discriminator_process_block_float(&state->discriminator, state->decimated_iq,
                                          FM_PIPELINE_DSP_BLOCK_SAMPLES, state->demodulated);
+
+    if (state->quality.report_interval_seconds > 0.0) {
+        if (input_valid) {
+            fm_quality_process_block(&state->quality, state->demodulated,
+                                     FM_PIPELINE_DSP_BLOCK_SAMPLES);
+        } else {
+            fm_quality_reset(&state->quality);
+        }
+    }
 
     if (state->rds_enabled) {
         const size_t produced_rds_sample_count =
@@ -62,7 +75,8 @@ bool fm_pipeline_has_complete_radiotext(const struct fm_pipeline_state *state) {
     return rds_parser_has_complete_radiotext(&state->rds_demod.parser);
 }
 
-static void fm_pipeline_destroy(struct fm_pipeline_state *state) {
+void fm_pipeline_destroy(struct fm_pipeline_state *state) {
+    fm_quality_destroy(&state->quality);
     liquid_resampler_destroy(&state->rds_resampler);
     rds_demod_destroy(&state->rds_demod);
 }

@@ -56,11 +56,12 @@ void stream_session_configure(struct stream_session *session, uint32_t requested
                               float volume_gain, float deemphasis_tau_us, enum stream_mode mode,
                               enum stream_container container, const char *requested_station_name,
                               bool explicit_station_name, bool rds_enabled,
-                              bool icy_metadata_enabled, enum fm_discriminator_impl demod_math) {
+                              bool icy_metadata_enabled, enum fm_discriminator_impl demod_math,
+                              float fm_quality_interval_seconds) {
     const bool allow_icy_metadata = rds_enabled && icy_metadata_enabled;
 
     fm_pipeline_reset(&session->fm_pipeline);
-    fm_pipeline_configure(&session->fm_pipeline, rds_enabled);
+    fm_pipeline_configure(&session->fm_pipeline, rds_enabled, fm_quality_interval_seconds);
     fm_discriminator_set_impl(&session->fm_pipeline.discriminator, demod_math);
     fm_mono_init(&session->fm_mono);
     fm_stereo_init(&session->fm_stereo);
@@ -114,6 +115,9 @@ int stream_session_fill_pcm_chunk(struct stream_session *session, struct rtl_sou
     *frame_count = STREAM_SESSION_MAX_AUDIO_FRAMES_PER_CHUNK;
 
     fm_pipeline_process_live_block(&session->fm_pipeline, rtl_source);
+    if (session->fm_pipeline.quality.report_interval_seconds > 0.0) {
+        fm_quality_report(&session->fm_pipeline.quality, session->requested_frequency_hz);
+    }
     stream_session_log_radiotext_update(session);
 
     if (session->mode == STREAM_MODE_STEREO) {

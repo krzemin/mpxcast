@@ -51,7 +51,8 @@ void stream_session_configure(struct stream_session *session, uint32_t requested
                               float volume_gain, float deemphasis_tau_us, enum stream_mode mode,
                               enum stream_container container, const char *requested_station_name,
                               bool explicit_station_name, bool rds_enabled,
-                              bool icy_metadata_enabled, enum fm_discriminator_impl demod_math);
+                              bool icy_metadata_enabled, enum fm_discriminator_impl demod_math,
+                              float fm_quality_interval_seconds);
 int stream_session_refresh_metadata(struct stream_session *session);
 int stream_session_build_prelude(struct stream_session *session, unsigned char *buffer,
                                  size_t capacity, size_t *length);

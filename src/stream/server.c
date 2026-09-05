@@ -572,12 +572,13 @@ static enum MHD_Result handle_request(void *cls, struct MHD_Connection *connecti
         }
 
         server_clear_chunks(server);
+        fm_pipeline_destroy(&server->session.fm_pipeline);
         stream_session_init(&server->session);
-        stream_session_configure(&server->session, request.frequency_hz, request.volume_gain,
-                                 request.deemphasis_tau_us, request.mode, request.container,
-                                 request.requested_station_name, request.explicit_station_name,
-                                 request.rds_enabled, request.icy_metadata_requested,
-                                 server->config.demod_math);
+        stream_session_configure(
+            &server->session, request.frequency_hz, request.volume_gain, request.deemphasis_tau_us,
+            request.mode, request.container, request.requested_station_name,
+            request.explicit_station_name, request.rds_enabled, request.icy_metadata_requested,
+            server->config.demod_math, server->config.fm_quality_interval_seconds);
         if (stream_session_refresh_metadata(&server->session) != 0) {
             ERROR("%s %s: failed to initialize stream metadata: frequency=%.3fMHz", method, url,
                   (double)request.frequency_hz / 1000000.0);
@@ -710,6 +711,7 @@ int server_run(const struct server_config *config) {
     INFO("Stopping HTTP server.");
     MHD_stop_daemon(daemon);
     server_clear_chunks(&server);
+    fm_pipeline_destroy(&server.session.fm_pipeline);
     rtl_source_stop(&server.rtl_source);
     pthread_mutex_destroy(&server.lock);
     INFO("HTTP server stopped.");

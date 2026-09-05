@@ -65,6 +65,7 @@ add_executable(mpxcast
     src/dsp/fir.c
     src/dsp/fm_discriminator.c
     src/dsp/fm_pipeline.c
+    src/dsp/fm_quality.c
     src/dsp/fm_mono.c
     src/dsp/fm_stereo.c
     src/dsp/liquid_resampler.c

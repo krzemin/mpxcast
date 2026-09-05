@@ -65,6 +65,7 @@ jobs:
       - verify-version
       - publish
     uses: ./.github/workflows/publish-aur.yml
+    secrets: inherit
     with:
       version: ${{ needs.verify-version.outputs.version }}
       pkgrel: '1'

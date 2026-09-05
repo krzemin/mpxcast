@@ -12,7 +12,8 @@ endif()
 
 set(MPXCAST_VERSION "${PROJECT_VERSION}")
 find_package(Git QUIET)
-if(GIT_FOUND)
+# Archive sources may be nested inside an unrelated packaging repository.
+if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
     execute_process(
         COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

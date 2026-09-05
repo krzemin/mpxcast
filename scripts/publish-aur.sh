@@ -9,6 +9,8 @@ dry_run=false
 pkgrel=1
 repository="${GITHUB_REPOSITORY:-krzemin/mpxcast}"
 version=''
+prepare_dir=''
+publish_dir=''
 
 usage() {
     cat <<'EOF'
@@ -21,6 +23,8 @@ Options:
   --pkgrel N         Arch package release number (default: 1).
   --repository OWNER/REPO
                     GitHub repository containing the release source archive.
+  --prepare DIR      Build and export review artifacts without publishing.
+  --publish DIR      Publish previously prepared files without rebuilding.
   --dry-run          Build and stage the AUR update, but do not commit or push.
   -h, --help         Show this help text.
 
@@ -52,6 +56,15 @@ while (($# > 0)); do
         repository="$2"
         shift 2
         ;;
+    --prepare|--publish)
+        (($# >= 2)) || die "$1 requires a directory"
+        if [[ "$1" == --prepare ]]; then
+            prepare_dir="$2"
+        else
+            publish_dir="$2"
+        fi
+        shift 2
+        ;;
     --dry-run)
         dry_run=true
         shift
@@ -66,14 +79,26 @@ while (($# > 0)); do
     esac
 done
 
+[[ -z "$prepare_dir" || -z "$publish_dir" ]] || die '--prepare and --publish are mutually exclusive'
+[[ -z "$publish_dir" || "$dry_run" == false ]] || die '--publish cannot be a dry run'
+if [[ -n "$prepare_dir" ]]; then
+    dry_run=true
+    mkdir -p "$prepare_dir"
+    prepare_dir=$(CDPATH='' cd -- "$prepare_dir" && pwd)
+    [[ -z $(ls -A "$prepare_dir") ]] || die 'prepare directory must be empty'
+fi
+if [[ -n "$publish_dir" ]]; then
+    publish_dir=$(CDPATH='' cd -- "$publish_dir" && pwd)
+fi
+
 version="${version#v}"
 [[ "$version" =~ ^[0-9][0-9A-Za-z._+]*$ ]] || die "invalid version: $version"
 [[ "$pkgrel" =~ ^[1-9][0-9]*$ ]] || die "invalid pkgrel: $pkgrel"
 [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid repository: $repository"
 [[ $(id -u) -ne 0 ]] || die 'run this script as an unprivileged build user'
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 template_dir="$repo_root/aur"
 
 [[ -f "$template_dir/PKGBUILD.in" ]] || die 'missing aur/PKGBUILD.in'
@@ -115,31 +140,40 @@ generate_srcinfo() {
     )
 }
 
-source_archive="$work_dir/mpxcast-$version.tar.gz"
-source_url="https://github.com/$repository/archive/refs/tags/v$version.tar.gz"
+if [[ -z "$publish_dir" ]]; then
+    source_archive="$work_dir/mpxcast-$version.tar.gz"
+    source_url="https://github.com/$repository/archive/refs/tags/v$version.tar.gz"
 
-echo "Downloading $source_url"
-curl --fail --location --silent --show-error --output "$source_archive" "$source_url"
-source_sha256=$(sha256sum "$source_archive" | awk '{print $1}')
+    echo "Downloading $source_url"
+    curl --fail --location --silent --show-error --output "$source_archive" "$source_url"
+    source_sha256=$(sha256sum "$source_archive" | awk '{print $1}')
 
-mkdir "$work_dir/source"
-tar -xzf "$source_archive" -C "$work_dir/source"
-source_root=$(find "$work_dir/source" -mindepth 1 -maxdepth 1 -type d -print -quit)
-[[ -n "$source_root" ]] || die 'release archive did not contain a source directory'
-source_version=$(sed -nE 's/^project\(mpxcast VERSION ([^ )]+).*/\1/p' "$source_root/CMakeLists.txt")
-[[ "$source_version" == "$version" ]] ||
-    die "release archive version $source_version does not match requested version $version"
+    mkdir "$work_dir/source"
+    tar -xzf "$source_archive" -C "$work_dir/source"
+    source_root=$(find "$work_dir/source" -mindepth 1 -maxdepth 1 -type d -print -quit)
+    [[ -n "$source_root" ]] || die 'release archive did not contain a source directory'
+    source_version=$(sed -nE 's/^project\(mpxcast VERSION ([^ )]+).*/\1/p' "$source_root/CMakeLists.txt")
+    [[ "$source_version" == "$version" ]] ||
+        die "release archive version $source_version does not match requested version $version"
 
-rendered_dir="$work_dir/rendered"
-render_package "$template_dir" "$rendered_dir" "$version" "$pkgrel" "$source_sha256" "$packaging_revision"
+    rendered_dir="$work_dir/rendered"
+    render_package "$template_dir" "$rendered_dir" "$version" "$pkgrel" "$source_sha256" "$packaging_revision"
 
-echo "Building mpxcast $version-$pkgrel"
-(
-    cd "$rendered_dir"
-    makepkg --verifysource
-    makepkg --syncdeps --cleanbuild --noconfirm
-)
-generate_srcinfo "$rendered_dir"
+    echo "Building mpxcast $version-$pkgrel"
+    (
+        cd "$rendered_dir"
+        makepkg --verifysource
+        makepkg --syncdeps --cleanbuild --noconfirm
+    )
+    generate_srcinfo "$rendered_dir"
+
+else
+    (cd "$publish_dir" && sha256sum --check SHA256SUMS)
+    [[ $(cat "$publish_dir/version") == "$version-$pkgrel" ]] || die 'prepared version does not match request'
+    [[ $(cat "$publish_dir/repository") == "$repository" ]] || die 'prepared repository does not match request'
+    [[ $(cat "$publish_dir/packaging-revision") == "$packaging_revision" ]] || die 'prepared packaging revision does not match checkout'
+    rendered_dir="$publish_dir/packaging"
+fi
 
 clone_aur_repository() {
     local checkout_dir=$1
@@ -147,11 +181,7 @@ clone_aur_repository() {
 
     if "$dry_run"; then
         clone_url="https://$AUR_HOST/mpxcast.git"
-        if ! git -c init.defaultBranch=master clone --quiet "$clone_url" "$checkout_dir"; then
-            echo 'AUR repository is unavailable over HTTPS; using an empty baseline for this dry run.' >&2
-            mkdir "$checkout_dir"
-            git -C "$checkout_dir" init --quiet --initial-branch=master
-        fi
+        git -c init.defaultBranch=master clone --quiet "$clone_url" "$checkout_dir"
         return
     fi
 
@@ -216,7 +246,13 @@ validate_existing_aur_package() {
 
 aur_checkout="$work_dir/aur"
 clone_aur_repository "$aur_checkout"
-validate_existing_aur_package "$aur_checkout"
+aur_baseline=$(git -C "$aur_checkout" rev-parse --verify HEAD 2>/dev/null || printf 'empty')
+if [[ -n "$publish_dir" ]]; then
+    [[ $(cat "$publish_dir/aur-baseline") == "$aur_baseline" ]] ||
+        die 'AUR changed since preparation; prepare and review a new run'
+else
+    validate_existing_aur_package "$aur_checkout"
+fi
 
 find "$aur_checkout" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
 cp "$rendered_dir/PKGBUILD" "$rendered_dir/.SRCINFO" "$rendered_dir/mpxcast.service" \
@@ -224,6 +260,48 @@ cp "$rendered_dir/PKGBUILD" "$rendered_dir/.SRCINFO" "$rendered_dir/mpxcast.serv
     "$rendered_dir/.gitignore" "$aur_checkout/"
 
 git -C "$aur_checkout" add --all
+if [[ -n "$prepare_dir" ]]; then
+    mkdir "$prepare_dir/packaging" "$prepare_dir/packages"
+    for file in PKGBUILD .SRCINFO mpxcast.service mpxcast.conf mpxcast.sysusers LICENSE .gitignore; do
+        cp "$rendered_dir/$file" "$prepare_dir/packaging/"
+    done
+    cp "$rendered_dir/"*.pkg.tar.* "$prepare_dir/packages/"
+    cp "$source_archive" "$prepare_dir/"
+    printf '%s\n' "$version-$pkgrel" > "$prepare_dir/version"
+    printf '%s\n' "$repository" > "$prepare_dir/repository"
+    printf '%s\n' "$packaging_revision" > "$prepare_dir/packaging-revision"
+    printf '%s\n' "$aur_baseline" > "$prepare_dir/aur-baseline"
+    git -C "$repo_root" rev-parse "v$version^{commit}" > "$prepare_dir/source-revision"
+    git -C "$aur_checkout" diff --cached > "$prepare_dir/aur.diff"
+    for package in "$prepare_dir/packages/"*.pkg.tar.*; do
+        pacman -Qip "$package"
+        pacman -Qlp "$package"
+    done > "$prepare_dir/package-info.txt"
+    (
+        cd "$prepare_dir"
+        # Markdown backticks are literal.
+        # shellcheck disable=SC2016
+        {
+            printf '# AUR package review\n\n'
+            printf -- '- Package: `mpxcast %s-%s` (built on x86_64)\n' "$version" "$pkgrel"
+            printf -- '- Source: [%s](%s)\n' "$source_url" "$source_url"
+            printf -- '- Source commit: `%s`\n' "$(cat source-revision)"
+            printf -- '- Source SHA256: `%s`\n' "$source_sha256"
+            printf -- '- Packaging commit: `%s`\n' "$packaging_revision"
+            printf -- '- AUR baseline: `%s`\n\n' "$aur_baseline"
+            printf 'Download the **aur-review** artifact from this workflow run to inspect the built package, source archive, packaging files, package file list, diff, and SHA256SUMS. Only packaging files are pushed to AUR.\n\n'
+            printf '## Built package metadata and files\n\n```text\n'
+            cat package-info.txt
+            printf '```\n\n## Proposed AUR diff\n\n```diff\n'
+            cat aur.diff
+            printf '```\n'
+        } > review.md
+        find . -type f -print0 | sort -z | xargs -0 sha256sum > "$work_dir/SHA256SUMS"
+        cp "$work_dir/SHA256SUMS" .
+    )
+    exit 0
+fi
+
 if git -C "$aur_checkout" diff --cached --quiet; then
     echo "AUR package is already at $version-$pkgrel."
     exit 0

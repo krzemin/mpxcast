@@ -58,3 +58,13 @@ jobs:
             --generate-notes \
             --title "mpxcast ${{ needs.verify-version.outputs.version }}" \
             --fail-on-no-commits
+
+  aur:
+    name: Prepare and deploy AUR package
+    needs:
+      - verify-version
+      - publish
+    uses: ./.github/workflows/publish-aur.yml
+    with:
+      version: ${{ needs.verify-version.outputs.version }}
+      pkgrel: '1'
